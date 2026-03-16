@@ -1,4 +1,5 @@
 import os
+import sys
 import queue
 import subprocess
 from threading import Thread
@@ -8,14 +9,20 @@ from datetime import datetime
 from tkinter.filedialog import askopenfilename
 from tkinter.messagebox import askyesno, showerror, showinfo, showwarning
 
-from firmware_archive import (
+# Добавляем src в sys.path, чтобы использовать src‑layout без установки пакета
+ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+SRC_DIR = os.path.join(ROOT_DIR, "src")
+if SRC_DIR not in sys.path:
+    sys.path.insert(0, SRC_DIR)
+
+from quest_update_tool.firmware_archive import (
     META_DEVICE_PAGES,
     FirmwareLink,
     fetch_firmware_links,
     get_firmware_page_for_device,
     sort_firmware_links_by_version,
 )
-from download_manager import DownloadManager, DownloadStatus, DownloadTask
+from quest_update_tool.download_manager import DownloadManager, DownloadStatus, DownloadTask
 
 
 class CustomOutput(Text):
@@ -706,13 +713,7 @@ firmware_path_entry = ttk.Entry(
 )
 firmware_path_entry.grid(row=3, column=1, columnspan=2, sticky="ew", pady=(5, 0))
 
-progress = ttk.Progressbar(
-    firmware_frame, orient="horizontal", mode="determinate"
-)
-progress.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(10, 0))
 firmware_filename = find_existing_firmware()
-percent = ttk.Label(firmware_frame, text="100%" if firmware_filename else "0%")
-percent.grid(row=4, column=2, sticky="e", pady=(10, 0))
 
 if firmware_filename:
     selected_firmware_label["text"] = os.path.basename(firmware_filename)

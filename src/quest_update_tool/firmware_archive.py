@@ -30,6 +30,7 @@ META_DEVICE_PAGES = {
     "Ray-Ban Display": "Ray-Ban_Display_firmware",
 }
 
+
 KINDLE_DEVICE_PAGES = {
     "KS2": "KS2_firmware",
     "KS": "KS_firmware",
@@ -150,3 +151,4 @@ def choose_latest_firmware(links: List[FirmwareLink]) -> Optional[FirmwareLink]:
     if not links:
         return None
     return max(links, key=lambda link: link.version_num)
+
