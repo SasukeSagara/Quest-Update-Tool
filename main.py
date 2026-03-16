@@ -156,47 +156,95 @@ def check_connect_func():
     text_out.insert(tk.END, "[OK] Device detected, ADB is working.\n")
 
 
-def _try_detect_device_silent() -> bool:
+def _probe_device_status() -> dict | None:
     """
-    Background device check without showing any dialogs.
-    Updates labels/combobox but does not touch the current step.
-    Returns True if a device is detected.
+    Run adb device detection without touching any Tkinter state.
+    Returns a dict with detection info or None on error/timeouts.
     """
-    global adb_ok
     if not os.path.isfile(file):
-        return False
+        return None
 
     try:
+        startupinfo = None
+        creationflags = 0
+        if os.name == "nt":
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            creationflags |= subprocess.CREATE_NO_WINDOW
+
         with subprocess.Popen(
-            [file, "devices"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            [file, "devices"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            startupinfo=startupinfo,
+            creationflags=creationflags,
         ) as proc:
-            devices_output, _ = proc.communicate()
+            try:
+                devices_output, _ = proc.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                return None
     except Exception:
-        return False
+        return None
 
     lines = [line.strip() for line in devices_output.splitlines() if line.strip()]
     has_device = any(
         "device" in line and not line.lower().startswith("list of") for line in lines
     )
+
+    model_raw = ""
+    if has_device:
+        try:
+            startupinfo = None
+            creationflags = 0
+            if os.name == "nt":
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                creationflags |= subprocess.CREATE_NO_WINDOW
+
+            with subprocess.Popen(
+                [file, "shell", "getprop", "ro.product.model"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                startupinfo=startupinfo,
+                creationflags=creationflags,
+            ) as model_proc:
+                try:
+                    model_raw, _ = model_proc.communicate(timeout=5)
+                except subprocess.TimeoutExpired:
+                    model_proc.kill()
+                    model_raw = ""
+        except Exception:
+            model_raw = ""
+
+    return {
+        "has_device": has_device,
+        "model": (model_raw or "").strip().lower(),
+    }
+
+
+def _apply_device_status(result: dict | None) -> None:
+    """
+    Apply device detection result to the UI.
+    Runs only in the Tkinter main thread.
+    """
+    global adb_ok
+
+    if result is None:
+        # treat as "no change" / error; avoid spamming logs
+        return
+
+    has_device = result.get("has_device", False)
+    model = result.get("model") or ""
+
     if not has_device:
         if device_status_var.get() != "Device not detected":
             text_out.insert(tk.END, "[INFO] Device disconnected.\n")
         device_status_var.set("Device not detected")
-        return False
+        return
 
-    # device is present, get its model
-    try:
-        with subprocess.Popen(
-            [file, "shell", "getprop", "ro.product.model"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        ) as model_proc:
-            model_raw, _ = model_proc.communicate()
-    except Exception:
-        model_raw = ""
-
-    model = (model_raw or "").strip().lower()
     prev_status = device_status_var.get()
 
     if "quest 2" in model or "quest_2" in model:
@@ -226,19 +274,21 @@ def _try_detect_device_silent() -> bool:
             tk.END,
             f"[INFO] Auto-detected device: {helmet_var.get()} (via adb devices).\n",
         )
-    return True
 
 
 def poll_device_status():
     """
-    Periodically poll adb to auto-update device status.
-    Does not show dialogs, only updates labels.
+    Periodically schedule adb device check in a background thread.
+    The result is posted to the queue and applied in the main thread.
     """
-    try:
-        _try_detect_device_silent()
-    finally:
-        # repeat the check every 5 seconds
-        root.after(5000, poll_device_status)
+
+    def worker():
+        result = _probe_device_status()
+        progress_queue.put(("device_status", result))
+
+    Thread(target=worker, daemon=True).start()
+    # repeat the check every 10 seconds to reduce background load
+    root.after(10000, poll_device_status)
 
 
 def run_update(adb_path: str, firmware_path: str):
@@ -645,6 +695,8 @@ def process_queue():
             showerror(payload["title"], payload["message"])
         elif event == "download_event":
             handle_download_event(payload)
+        elif event == "device_status":
+            _apply_device_status(payload)
 
     root.after(100, process_queue)
 
