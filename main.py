@@ -4,6 +4,7 @@
 
 import os
 import queue
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -492,6 +493,38 @@ def resource_path(relative: str) -> str:
     return os.path.join(base, relative)
 
 
+def auto_select_adb() -> None:
+    """
+    Try to find a usable adb in this order:
+    1) adb from PATH
+    2) bundled adb.exe inside the PyInstaller bundle (files/adb.exe)
+    3) local files/adb.exe next to the script
+    """
+    global file
+
+    if "adb_path_var" not in globals():
+        return
+
+    candidates: list[str] = []
+
+    adb_from_path = shutil.which("adb")
+    if adb_from_path:
+        candidates.append(adb_from_path)
+
+    candidates.append(resource_path("files/adb.exe"))
+    candidates.append(os.path.join(ROOT_DIR, "files", "adb.exe"))
+
+    for candidate in candidates:
+        if candidate and os.path.isfile(candidate):
+            file = candidate
+            adb_path_var.set(candidate)
+            if "button_check" in globals():
+                button_check["state"] = "normal"
+            if "text_out" in globals():
+                text_out.insert(tk.END, f"[INFO] Using ADB at: {candidate}\n")
+            return
+
+
 root = tk.Tk()
 root.title("Meta Quest Updater")
 try:
@@ -764,6 +797,8 @@ def on_downloads_double_click(_event):
 
 
 downloads_tree.bind("<Double-1>", on_downloads_double_click)
+
+auto_select_adb()
 
 # Show full path to the selected firmware
 ttk.Label(firmware_frame, text="Firmware path:").grid(

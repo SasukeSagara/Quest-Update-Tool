@@ -21,6 +21,13 @@ dist/
 # PyInstaller / cx_Freeze
 output/
 *.manifest
+dist/
+build/
+platform-tools/
+platform-tools.zip
+files/adb.exe
+files/AdbWinApi.dll
+files/AdbWinUsbApi.dll
 
 # Testing / coverage
 .pytest_cache/

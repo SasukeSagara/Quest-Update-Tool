@@ -6,6 +6,9 @@ on:
       - main
       - master
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 permissions:
   contents: write
 
@@ -23,7 +26,7 @@ jobs:
       - name: Compute date-based tag
         id: set_tag
         run: |
-          TAG_NAME=$(date +'%d.%m.%y')
+          TAG_NAME=$(date +'%d.%m.%y-%H%M')
           echo "Using tag: $TAG_NAME"
           echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
 
@@ -33,9 +36,11 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # If the tag already exists, don't fail
+          # If the tag already exists locally or on origin, don't fail
           if git rev-parse "$TAG_NAME" >/dev/null 2>&1; then
-            echo "Tag $TAG_NAME already exists, skipping creation."
+            echo "Tag $TAG_NAME already exists locally, skipping creation."
+          elif git ls-remote --tags origin "$TAG_NAME" | grep -q "refs/tags/$TAG_NAME"; then
+            echo "Tag $TAG_NAME already exists on origin, skipping creation and push."
           else
             git tag "$TAG_NAME"
             git push origin "$TAG_NAME"
@@ -60,6 +65,21 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
+      - name: Download Android platform-tools
+        shell: pwsh
+        run: |
+          $url = "https://dl.google.com/android/repository/platform-tools-latest-windows.zip"
+          Invoke-WebRequest -Uri $url -OutFile "platform-tools.zip"
+          Expand-Archive "platform-tools.zip" -DestinationPath "platform-tools" -Force
+
+      - name: Prepare ADB binaries in files/
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "files" | Out-Null
+          Copy-Item "platform-tools/platform-tools/adb.exe" "files/adb.exe" -Force
+          Copy-Item "platform-tools/platform-tools/AdbWinApi.dll" "files/AdbWinApi.dll" -Force
+          Copy-Item "platform-tools/platform-tools/AdbWinUsbApi.dll" "files/AdbWinUsbApi.dll" -Force
+
       - name: Build EXE with PyInstaller
         run: >
           uv run pyinstaller
@@ -68,7 +88,10 @@ jobs:
           --noconsole
           --icon ./files/favicon.ico
           --paths ./src
-          --add-data "files/favicon.ico;files/img"
+          --add-data "files\\favicon.ico;files"
+          --add-data "files\\adb.exe;files"
+          --add-data "files\\AdbWinApi.dll;files"
+          --add-data "files\\AdbWinUsbApi.dll;files"
           main.py
 
       - name: Upload build artifact

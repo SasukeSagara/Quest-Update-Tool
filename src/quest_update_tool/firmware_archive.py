@@ -80,7 +80,7 @@ def fetch_firmware_links(page_slug: str, timeout: float = 15.0) -> List[Firmware
     Raises requests.RequestException on network errors.
     """
     url = f"{BASE_URL}/{page_slug}"
-    resp = requests.get(url, timeout=timeout)
+    resp = requests.get(url, timeout=timeout, verify=False)
     resp.raise_for_status()
 
     bs: BeautifulSoup = BeautifulSoup(resp.text, "lxml")
