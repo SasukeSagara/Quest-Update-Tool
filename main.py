@@ -8,8 +8,6 @@ from datetime import datetime
 from tkinter.filedialog import askopenfilename
 from tkinter.messagebox import askyesno, showerror, showinfo, showwarning
 
-import requests
-
 from firmware_archive import (
     META_DEVICE_PAGES,
     FirmwareLink,
@@ -17,6 +15,7 @@ from firmware_archive import (
     get_firmware_page_for_device,
     sort_firmware_links_by_version,
 )
+from download_manager import DownloadManager, DownloadStatus, DownloadTask
 
 
 class CustomOutput(Text):
@@ -218,103 +217,6 @@ def poll_device_status():
         root.after(5000, poll_device_status)
 
 
-def download_file_with_progress(url: str, out_path: str):
-    """
-    Скачивание файла с отображением прогресса и поддержкой отмены.
-    Работает в отдельном потоке.
-    """
-    global download_in_progress, download_cancelled
-    try:
-        with requests.get(url, stream=True, timeout=30) as resp:
-            resp.raise_for_status()
-            total = int(resp.headers.get("Content-Length", "0") or "0")
-            downloaded = 0
-
-            with open(out_path, "wb") as f:
-                for chunk in resp.iter_content(chunk_size=8192):
-                    if download_cancelled:
-                        break
-                    if not chunk:
-                        continue
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    if total:
-                        progress_queue.put(
-                            (
-                                "progress",
-                                {
-                                    "current": downloaded,
-                                    "total": total,
-                                },
-                            )
-                        )
-
-        if download_cancelled:
-            # Удаляем недокачанный файл
-            try:
-                if os.path.exists(out_path):
-                    os.remove(out_path)
-            except OSError:
-                pass
-            progress_queue.put(
-                (
-                    "log",
-                    {"text": "[INFO] Загрузка прошивки отменена пользователем.\n"},
-                )
-            )
-            progress_queue.put(
-                (
-                    "download_finished",
-                    {"reason": "cancelled"},
-                )
-            )
-        else:
-            progress_queue.put(
-                (
-                    "log",
-                    {"text": "[OK] Загрузка прошивки завершена.\n"},
-                )
-            )
-            # Основной обработчик прогресса уже покажет 100% и сообщение
-            progress_queue.put(
-                (
-                    "download_finished",
-                    {"reason": "completed"},
-                )
-            )
-    except Exception as e:
-        progress_queue.put(
-            (
-                "dialog_error",
-                {
-                    "title": "Ошибка сети",
-                    "message": f"Ошибка при скачивании прошивки:\n{e}",
-                },
-            )
-        )
-        progress_queue.put(
-            (
-                "download_finished",
-                {"reason": "error"},
-            )
-        )
-    finally:
-        download_in_progress = False
-        download_cancelled = False
-
-
-def cancel_download():
-    """
-    Обработчик кнопки отмены загрузки.
-    """
-    global download_cancelled
-    if not download_in_progress:
-        return
-    download_cancelled = True
-    status_text_var.set("Отмена загрузки прошивки...")
-    text_out.insert(END, "[INFO] Отмена загрузки по запросу пользователя...\n")
-
-
 def run_update(adb_path: str, firmware_path: str):
     progress_queue.put(
         (
@@ -360,8 +262,11 @@ firmware_filename = None
 progress_queue: "queue.Queue[tuple]" = queue.Queue()
 adb_ok = False
 firmware_ready = False
-download_in_progress = False
-download_cancelled = False
+
+# Загрузки
+downloads_tree: "ttk.Treeview"
+downloads: dict[int, DownloadTask] = {}
+active_download_manager: DownloadManager | None = None
 
 
 def find_existing_firmware():
@@ -559,6 +464,7 @@ root.option_add("*Font", default_font)
 HELMET_VERSIONS = dict(META_DEVICE_PAGES)
 
 helmet_var = StringVar(value="Quest 3")
+firmware_path_var = StringVar(value="")
 
 
 def start_update():
@@ -573,7 +479,7 @@ def start_update():
 
 
 def download_firmware():
-    global firmware_filename, firmware_ready, download_in_progress, download_cancelled
+    global firmware_filename, firmware_ready
     device = helmet_var.get()
     page_slug = get_firmware_page_for_device(device)
     if not page_slug:
@@ -598,29 +504,15 @@ def download_firmware():
 
     res = href
     text_out.insert(END, f"Выбрана ссылка прошивки: {res}\n")
-    text_out.insert(END, "Скачивание прошивки...\n")
+    text_out.insert(END, "Скачивание прошивки добавлено в список...\n")
 
-    # Имя файла берём из URL (последний сегмент пути)
-    filename = os.path.basename(res.split("?")[0]) or "firmware.zip"
-    firm_dir = "./files"
-    os.makedirs(firm_dir, exist_ok=True)
-    downloaded_file = os.path.join(firm_dir, filename)
+    # Передаём задачу менеджеру загрузок
+    def _enqueue():
+        if active_download_manager is None:
+            return
+        active_download_manager.add_download(res)
 
-    firmware_filename = downloaded_file
-    firmware_ready = False
-    status_text_var.set("Идёт скачивание прошивки...")
-    download_in_progress = True
-    download_cancelled = False
-    button_cancel_download["state"] = "normal"
-
-    Thread(
-        target=download_file_with_progress,
-        args=(res, downloaded_file),
-        daemon=True,
-    ).start()
-
-    text_out.insert(END, f"Загрузка начата: {downloaded_file}\n")
-    selected_firmware_label["text"] = filename
+    Thread(target=_enqueue, daemon=True).start()
 
 
 def choose_firmware_file():
@@ -631,8 +523,9 @@ def choose_firmware_file():
     )
     if path:
         firmware_filename = path
-        selected_firmware_label["text"] = os.path.basename(path)
         firmware_ready = True
+        selected_firmware_label["text"] = os.path.basename(path)
+        firmware_path_var.set(os.path.abspath(path))
         status_text_var.set("Выбран локальный файл прошивки.")
         update_step_label(3)
         if adb_ok:
@@ -646,36 +539,13 @@ def process_queue():
         except queue.Empty:
             break
 
-        if event == "progress":
-            current = payload["current"]
-            total = payload["total"]
-            value = current / total * 100
-            progress["value"] = value
-            global_progress["value"] = value
-            percent["text"] = f"{int(value)}%"
-            if current >= total:
-                showinfo("Прошивка скачана.", "Прошивка скачана.")
-                status_text_var.set("Шаг 3: прошивка скачана, можно запускать прошивку устройства.")
-                update_step_label(3)
-                globals()["firmware_ready"] = True
-                if globals().get("adb_ok"):
-                    button_run["state"] = "normal"
-        elif event == "log":
+        if event == "log":
             text = payload["text"]
             text_out.insert(END, text)
         elif event == "dialog_error":
             showerror(payload["title"], payload["message"])
-        elif event == "download_finished":
-            # Завершение/отмена загрузки: сбрасываем кнопку и при необходимости файл
-            reason = payload.get("reason")
-            if reason == "cancelled":
-                status_text_var.set("Загрузка прошивки отменена.")
-                firmware_filename = None
-                selected_firmware_label["text"] = "Файл прошивки не выбран"
-                progress["value"] = 0
-                global_progress["value"] = 0
-                percent["text"] = "0%"
-            button_cancel_download["state"] = "disabled"
+        elif event == "download_event":
+            handle_download_event(payload)
 
     root.after(100, process_queue)
 
@@ -775,7 +645,7 @@ button_choose_fw = ttk.Button(
 button_cancel_download = ttk.Button(
     firmware_frame,
     text="Отменить",
-    command=cancel_download,
+    command=lambda: cancel_selected_download(),
     state="disabled",
 )
 
@@ -788,16 +658,65 @@ selected_firmware_label = ttk.Label(
 )
 selected_firmware_label.grid(row=1, column=0, columnspan=3, sticky="w", pady=(10, 0))
 
+# Таблица загрузок
+downloads_frame = ttk.Frame(firmware_frame)
+downloads_frame.grid(row=2, column=0, columnspan=3, sticky="nsew", pady=(5, 0))
+firmware_frame.rowconfigure(2, weight=1)
+
+columns = ("id", "filename", "status", "progress")
+downloads_tree = ttk.Treeview(
+    downloads_frame,
+    columns=columns,
+    show="headings",
+    height=5,
+)
+downloads_tree.heading("id", text="ID")
+downloads_tree.heading("filename", text="Файл")
+downloads_tree.heading("status", text="Статус")
+downloads_tree.heading("progress", text="Прогресс")
+
+downloads_tree.column("id", width=40, anchor="center")
+downloads_tree.column("filename", width=180, anchor="w")
+downloads_tree.column("status", width=90, anchor="center")
+downloads_tree.column("progress", width=80, anchor="center")
+
+downloads_tree.grid(row=0, column=0, sticky="nsew")
+downloads_scroll = ttk.Scrollbar(
+    downloads_frame, orient="vertical", command=downloads_tree.yview
+)
+downloads_scroll.grid(row=0, column=1, sticky="ns")
+downloads_tree.configure(yscrollcommand=downloads_scroll.set)
+
+downloads_frame.rowconfigure(0, weight=1)
+downloads_frame.columnconfigure(0, weight=1)
+
+
+def on_downloads_double_click(event):
+    select_download_for_firmware()
+
+
+downloads_tree.bind("<Double-1>", on_downloads_double_click)
+
+# Отображение полного пути выбранной прошивки
+ttk.Label(firmware_frame, text="Путь прошивки:").grid(
+    row=3, column=0, sticky="w", pady=(5, 0)
+)
+firmware_path_entry = ttk.Entry(
+    firmware_frame, textvariable=firmware_path_var, state="readonly"
+)
+firmware_path_entry.grid(row=3, column=1, columnspan=2, sticky="ew", pady=(5, 0))
+
 progress = ttk.Progressbar(
     firmware_frame, orient="horizontal", mode="determinate"
 )
-progress.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+progress.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(10, 0))
 firmware_filename = find_existing_firmware()
 percent = ttk.Label(firmware_frame, text="100%" if firmware_filename else "0%")
-percent.grid(row=2, column=2, sticky="e", pady=(10, 0))
+percent.grid(row=4, column=2, sticky="e", pady=(10, 0))
 
 if firmware_filename:
-    selected_firmware_label["text"] = firmware_filename
+    selected_firmware_label["text"] = os.path.basename(firmware_filename)
+    firmware_path_var.set(os.path.abspath(firmware_filename))
 
 # ---- Нижняя часть: лог и общий прогресс ----
 bottom_frame = ttk.Frame(root, padding=(10, 0, 10, 10))
@@ -838,6 +757,107 @@ button_run = ttk.Button(
     state="disabled",
 )
 button_run.grid(row=0, column=1, rowspan=2, padx=(10, 0))
+
+
+def download_manager_event(event: str, payload: dict) -> None:
+    """
+    Коллбек для DownloadManager: кладём события в общую очередь,
+    чтобы обрабатывать их в главном потоке Tkinter.
+    """
+    progress_queue.put(("download_event", {"event": event, "payload": payload}))
+
+
+def _status_to_text(status: DownloadStatus) -> str:
+    mapping = {
+        DownloadStatus.QUEUED: "В очереди",
+        DownloadStatus.DOWNLOADING: "Загрузка",
+        DownloadStatus.COMPLETED: "Готово",
+        DownloadStatus.CANCELLED: "Отменено",
+        DownloadStatus.ERROR: "Ошибка",
+    }
+    return mapping.get(status, str(status))
+
+
+def handle_download_event(message: dict) -> None:
+    global firmware_filename, firmware_ready
+
+    event = message["event"]
+    payload = message["payload"]
+    task: DownloadTask | None = payload.get("task")
+
+    if task is None:
+        return
+
+    downloads[task.id] = task
+
+    # Обновляем / создаём строку в Treeview
+    item_id = f"task-{task.id}"
+    values = (
+        task.id,
+        task.filename,
+        _status_to_text(task.status),
+        f"{task.progress}%",
+    )
+    if item_id in downloads_tree.get_children(""):
+        downloads_tree.item(item_id, values=values)
+    else:
+        downloads_tree.insert("", "end", iid=item_id, values=values)
+
+    # Логика по типу события
+    if event == "task_started":
+        text_out.insert(END, f"[INFO] Начата загрузка: {task.filename}\n")
+        status_text_var.set("Идёт скачивание прошивки...")
+    elif event == "task_progress":
+        # Прогресс показываем в таблице; глобальный индикатор не трогаем,
+        # чтобы он не "мигал" при нескольких одновременных загрузках.
+        pass
+    elif event == "task_completed":
+        text_out.insert(END, f"[OK] Загрузка завершена: {task.filename}\n")
+        status_text_var.set("Прошивка скачана. Дважды кликните по строке, чтобы выбрать её для установки.")
+    elif event == "task_cancelled_finished":
+        text_out.insert(END, f"[INFO] Загрузка отменена: {task.filename}\n")
+    elif event == "task_error":
+        text_out.insert(END, f"[ERROR] Ошибка загрузки {task.filename}: {task.error}\n")
+
+    # После любого события пересчитываем, есть ли активные загрузки
+    has_active = any(t.status == DownloadStatus.DOWNLOADING for t in downloads.values())
+    button_cancel_download["state"] = "normal" if has_active else "disabled"
+
+
+def cancel_selected_download() -> None:
+    if active_download_manager is None:
+        return
+    sel = downloads_tree.selection()
+    if not sel:
+        return
+    item_id = sel[0]
+    task_id = int(downloads_tree.set(item_id, "id"))
+    active_download_manager.cancel(task_id)
+
+
+def select_download_for_firmware() -> None:
+    global firmware_filename, firmware_ready
+
+    sel = downloads_tree.selection()
+    if not sel:
+        return
+    item_id = sel[0]
+    task_id = int(downloads_tree.set(item_id, "id"))
+    task = downloads.get(task_id)
+    if not task or task.status is not DownloadStatus.COMPLETED:
+        return
+
+    firmware_filename = task.path
+    firmware_ready = True
+    selected_firmware_label["text"] = task.filename
+    firmware_path_var.set(os.path.abspath(task.path))
+    status_text_var.set("Выбрана прошивка из списка загрузок.")
+    update_step_label(3)
+    if adb_ok:
+        button_run["state"] = "normal"
+
+
+active_download_manager = DownloadManager("./files", download_manager_event)
 
 root.after(100, process_queue)
 root.after(3000, poll_device_status)
