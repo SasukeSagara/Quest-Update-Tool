@@ -59,6 +59,18 @@ Python dependencies are listed in `pyproject.toml` (section `project.dependencie
 
 ### Installation
 
+#### Option 1 — download ready `.exe` (recommended)
+
+- Go to the **Releases** section of this repository on GitHub.
+- Download the latest `MetaQuestUpdater.exe` asset (tag name is the build date in format `dd.mm.yy`).
+- Put `MetaQuestUpdater.exe` and the `files` folder next to each other:
+  - resulting layout:
+    - `MetaQuestUpdater.exe`
+    - `files/` (with `adb.exe`, DLLs and icons inside).
+- Run `MetaQuestUpdater.exe`.
+
+#### Option 2 — run from source (Python)
+
 Recommended way is to use [`uv`](https://github.com/astral-sh/uv) and the `sync` command:
 
 ```bash
@@ -131,9 +143,9 @@ If you distribute the built `.exe`, make sure the `files` folder is placed next 
 
 ---
 
-### Building `.exe` (PyInstaller)
+### Building `.exe` from source (PyInstaller)
 
-You can build a Windows executable with `PyInstaller`:
+If you want to build the executable locally:
 
 ```bash
 uv add pyinstaller

@@ -1,4 +1,5 @@
 __pycache__/
+__pycache__
 *.py[cod]
 *.pyo
 *.pyd
@@ -7,11 +8,33 @@ __pycache__/
 .venv/
 venv/
 env/
+.env/
+.env.*.local
 
-# Python packaging
+# Python packaging / build artifacts
 build/
 dist/
 *.egg-info/
+*.egg
+*.whl
+
+# PyInstaller / cx_Freeze
+output/
+*.manifest
+
+# Testing / coverage
+.pytest_cache/
+.tox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Type checking / linting
+.mypy_cache/
+.ruff_cache/
+dmypy.json
+dmypy.json.*
 
 # IDE / editor
 .vscode/
@@ -27,5 +50,7 @@ Thumbs.db
 *.log
 tmp/
 
-# Local config
+# Tooling / local config
 .python-version
+.cursor/
+.venv.bak/

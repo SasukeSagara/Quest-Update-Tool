@@ -1,0 +1,103 @@
+name: Build and release MetaQuestUpdater
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: write
+
+jobs:
+  prepare-tag:
+    name: Prepare date tag
+    runs-on: ubuntu-latest
+    outputs:
+      tag_name: ${{ steps.set_tag.outputs.tag_name }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Compute date-based tag
+        id: set_tag
+        run: |
+          TAG_NAME=$(date +'%d.%m.%y')
+          echo "Using tag: $TAG_NAME"
+          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push tag
+        env:
+          TAG_NAME: ${{ steps.set_tag.outputs.tag_name }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # If the tag already exists, don't fail
+          if git rev-parse "$TAG_NAME" >/dev/null 2>&1; then
+            echo "Tag $TAG_NAME already exists, skipping creation."
+          else
+            git tag "$TAG_NAME"
+            git push origin "$TAG_NAME"
+          fi
+
+  build-windows:
+    needs: prepare-tag
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Build EXE with PyInstaller
+        run: >
+          uv run pyinstaller
+          --name MetaQuestUpdater
+          --onefile
+          --noconsole
+          --icon ./files/favicon.ico
+          --paths ./src
+          --add-data "files/favicon.ico;files/img"
+          main.py
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MetaQuestUpdater-exe
+          path: dist/MetaQuestUpdater.exe
+
+  create-release:
+    needs:
+      - prepare-tag
+      - build-windows
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: MetaQuestUpdater-exe
+          path: dist
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare-tag.outputs.tag_name }}
+          name: MetaQuestUpdater ${{ needs.prepare-tag.outputs.tag_name }}
+          files: dist/MetaQuestUpdater.exe
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
