@@ -195,8 +195,10 @@ def _try_detect_device_silent() -> bool:
     if firmware_ready:
         button_run["state"] = "normal"
 
-    # Пишем в лог только при изменении состояния (чтобы не спамить каждую проверку)
+    # Переходим к шагу 2, если раньше устройство было "не обнаружено"
     if prev_status != device_status_var.get():
+        update_step_label(2)
+        status_text_var.set("Шаг 2: устройство подключено. Выберите или скачайте прошивку.")
         text_out.insert(
             END,
             f"[INFO] Автоопределение устройства: {helmet_var.get()} (через adb devices).\n",
@@ -681,28 +683,29 @@ def process_queue():
 step_var = StringVar(value="1")
 
 
+step_text_var = StringVar(value="Шаг 1 из 4")
+
+
 def update_step_label(step: int):
     step_var.set(str(step))
+    step_text_var.set(f"Шаг {step} из 4")
 
 
-# ---- Верхняя строка шагов ----
+# ---- Верхняя панель: заголовок и компактный шаг ----
 steps_frame = ttk.Frame(root, padding=(10, 10, 10, 0))
 steps_frame.grid(row=0, column=0, sticky="ew")
-steps_frame.columnconfigure(1, weight=1)
+steps_frame.columnconfigure(0, weight=1)
 
-step_title = ttk.Label(
+title_label = ttk.Label(
     steps_frame,
-    text="Шаги: 1. ADB  →  2. Шлем  →  3. Прошивка  →  4. Прошивка устройства",
-    font=("Segoe UI", 10, "bold"),
+    text="Meta Quest Updater",
+    font=("Segoe UI", 11, "bold"),
 )
-step_title.grid(row=0, column=0, sticky="w")
+title_label.grid(row=0, column=0, sticky="w")
 
 current_step_label = ttk.Label(
     steps_frame,
-    textvariable=step_var,
-    width=2,
-    anchor="center",
-    relief="groove",
+    textvariable=step_text_var,
 )
 current_step_label.grid(row=0, column=1, sticky="e")
 
@@ -760,36 +763,38 @@ helmet_selector.grid(row=4, column=1, columnspan=2, sticky="w", padx=(5, 0), pad
 firmware_frame = ttk.LabelFrame(center_frame, text="Прошивка", padding=10)
 firmware_frame.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
 firmware_frame.columnconfigure(0, weight=1)
+firmware_frame.columnconfigure(1, weight=1)
+firmware_frame.columnconfigure(2, weight=0)
 
 button_download_fw = ttk.Button(
-    firmware_frame, text="Скачать прошивку...", command=download_firmware
+    firmware_frame, text="Скачать", command=download_firmware
 )
 button_choose_fw = ttk.Button(
-    firmware_frame, text="Выбрать файл прошивки...", command=choose_firmware_file
+    firmware_frame, text="Выбрать файл…", command=choose_firmware_file
 )
-button_download_fw.grid(row=0, column=0, sticky="w")
-button_choose_fw.grid(row=1, column=0, sticky="w", pady=(5, 0))
-
 button_cancel_download = ttk.Button(
     firmware_frame,
-    text="Отменить загрузку",
+    text="Отменить",
     command=cancel_download,
     state="disabled",
 )
-button_cancel_download.grid(row=1, column=1, sticky="e", padx=(10, 0))
+
+button_download_fw.grid(row=0, column=0, sticky="w")
+button_choose_fw.grid(row=0, column=1, sticky="w", padx=(5, 0))
+button_cancel_download.grid(row=0, column=2, sticky="e", padx=(10, 0))
 
 selected_firmware_label = ttk.Label(
     firmware_frame, text="Файл прошивки не выбран"
 )
-selected_firmware_label.grid(row=2, column=0, sticky="w", pady=(10, 0))
+selected_firmware_label.grid(row=1, column=0, columnspan=3, sticky="w", pady=(10, 0))
 
 progress = ttk.Progressbar(
     firmware_frame, orient="horizontal", mode="determinate"
 )
-progress.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+progress.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(10, 0))
 firmware_filename = find_existing_firmware()
 percent = ttk.Label(firmware_frame, text="100%" if firmware_filename else "0%")
-percent.grid(row=3, column=0, sticky="e", pady=(10, 0))
+percent.grid(row=2, column=2, sticky="e", pady=(10, 0))
 
 if firmware_filename:
     selected_firmware_label["text"] = firmware_filename
