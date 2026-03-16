@@ -99,8 +99,8 @@ pip install -r requirements.txt
 1. Clone the repository:
 
 ```bash
-git clone https://github.com/<USER>/<REPO>.git
-cd <REPO>
+git clone https://github.com/SasukeSagara/Quest-Update-Tool.git
+cd Quest-Update-Tool
 ```
 
 2. Install dependencies (prefer `uv sync`, see [Requirements](#requirements)).
