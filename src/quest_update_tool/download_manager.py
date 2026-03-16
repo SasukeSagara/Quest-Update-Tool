@@ -8,6 +8,8 @@ import requests
 
 
 class DownloadStatus(Enum):
+    """High-level state of a single download task."""
+
     QUEUED = auto()
     DOWNLOADING = auto()
     COMPLETED = auto()
@@ -17,6 +19,8 @@ class DownloadStatus(Enum):
 
 @dataclass
 class DownloadTask:
+    """Single download job tracked by DownloadManager."""
+
     id: int
     url: str
     filename: str
@@ -28,10 +32,10 @@ class DownloadTask:
 
 class DownloadManager:
     """
-    Простой менеджер параллельных загрузок.
+    Simple manager for parallel downloads.
 
-    Все события пробрасываются во внешний мир через коллбек on_event,
-    чтобы Tkinter-UI мог обрабатывать их в своём потоке.
+    All events are forwarded to the outside world via the on_event callback,
+    so that the Tkinter UI can handle them in its own thread.
     """
 
     def __init__(self, target_dir: str, on_event: Callable[[str, dict], None]):
@@ -43,7 +47,7 @@ class DownloadManager:
         self._lock = threading.Lock()
         self._next_id = 1
 
-    # ----- Внешний API -----
+    # ----- Public API -----
 
     def add_download(self, url: str) -> DownloadTask:
         with self._lock:
@@ -59,7 +63,9 @@ class DownloadManager:
 
         self._fire("task_created", {"task": task})
 
-        thread = threading.Thread(target=self._run_download, args=(task.id,), daemon=True)
+        thread = threading.Thread(
+            target=self._run_download, args=(task.id,), daemon=True
+        )
         thread.start()
 
         return task
@@ -69,11 +75,15 @@ class DownloadManager:
             task = self._tasks.get(task_id)
             if not task:
                 return
-            if task.status in (DownloadStatus.COMPLETED, DownloadStatus.CANCELLED, DownloadStatus.ERROR):
+            if task.status in (
+                DownloadStatus.COMPLETED,
+                DownloadStatus.CANCELLED,
+                DownloadStatus.ERROR,
+            ):
                 return
             task.status = DownloadStatus.CANCELLED
 
-        # сам поток проверит статус и завершится
+        # the worker thread will see the cancelled status and exit
         self._fire("task_cancelled", {"task_id": task_id})
 
     def get_task(self, task_id: int) -> Optional[DownloadTask]:
@@ -84,14 +94,14 @@ class DownloadManager:
         with self._lock:
             return dict(self._tasks)
 
-    # ----- Внутренняя логика -----
+    # ----- Internal logic -----
 
     def _run_download(self, task_id: int) -> None:
         task = self.get_task(task_id)
         if not task:
             return
 
-        # Если пользователь успел отменить до старта — ничего не делаем
+        # If the user managed to cancel before start, do nothing
         if task.status == DownloadStatus.CANCELLED:
             return
 
@@ -106,7 +116,7 @@ class DownloadManager:
 
                 with open(task.path, "wb") as f:
                     for chunk in resp.iter_content(chunk_size=8192):
-                        # проверяем отмену
+                        # check for cancellation
                         if self._is_cancelled(task_id):
                             raise _CancelledDownload()
 
@@ -119,12 +129,12 @@ class DownloadManager:
                             progress = int(downloaded / total * 100)
                             self._update_progress(task_id, progress)
 
-            # если дошли сюда без исключений и без отмены — завершили успешно
+            # if we got here without exceptions and without cancellation, it completed successfully
             self._set_status(task_id, DownloadStatus.COMPLETED)
             self._fire("task_completed", {"task": self.get_task(task_id)})
 
         except _CancelledDownload:
-            # удаляем недокачанный файл
+            # remove partially downloaded file
             try:
                 if os.path.exists(task.path):
                     os.remove(task.path)
@@ -150,7 +160,9 @@ class DownloadManager:
             task.progress = max(0, min(100, progress))
         self._fire("task_progress", {"task": self.get_task(task_id)})
 
-    def _set_status(self, task_id: int, status: DownloadStatus, error: Optional[str] = None) -> None:
+    def _set_status(
+        self, task_id: int, status: DownloadStatus, error: Optional[str] = None
+    ) -> None:
         with self._lock:
             task = self._tasks.get(task_id)
             if not task:
@@ -162,13 +174,12 @@ class DownloadManager:
     def _fire(self, event: str, payload: dict) -> None:
         try:
             self._on_event(event, payload)
-        except Exception:
-            # UI-слой не должен ломать менеджер
+        except Exception:  # noqa: BLE001
+            # UI layer should not be able to break the manager
             pass
 
 
 class _CancelledDownload(Exception):
-    """Внутреннее исключение для управления потоком при отмене."""
+    """Internal exception used to control flow when a download is cancelled."""
 
     pass
-

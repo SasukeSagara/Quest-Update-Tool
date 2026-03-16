@@ -1,6 +1,5 @@
 """
-Пакет с основной логикой утилиты обновления прошивки Meta Quest.
+Core logic package for the Meta Quest firmware update utility.
 
-Содержит работу с архивом прошивок и менеджер загрузок.
+Contains firmware archive helpers and the download manager.
 """
-

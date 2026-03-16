@@ -5,12 +5,13 @@ from typing import List, Optional
 import requests
 from bs4 import BeautifulSoup, Tag
 
-
 BASE_URL = "https://cocaine.trade"
 
 
 @dataclass
 class FirmwareLink:
+    """Structured representation of a firmware row parsed from the HTML table."""
+
     incremental: str
     version: str
     runtime_version: str
@@ -55,8 +56,8 @@ KINDLE_DEVICE_PAGES = {
 
 def get_firmware_page_for_device(device_name: str) -> Optional[str]:
     """
-    Вернуть slug страницы прошивок для указанного устройства.
-    Сначала ищем среди Meta, затем среди Kindle.
+    Return firmware page slug for the given device name.
+    First look among Meta devices, then among Kindle devices.
     """
     if device_name in META_DEVICE_PAGES:
         return META_DEVICE_PAGES[device_name]
@@ -75,8 +76,8 @@ def _extract_version_num_from_tag(link: Tag) -> int:
 
 def fetch_firmware_links(page_slug: str, timeout: float = 15.0) -> List[FirmwareLink]:
     """
-    Загрузить страницу прошивок и вернуть список структурированных ссылок.
-    Бросает requests.RequestException при сетевых ошибках.
+    Load the firmware page and return a list of structured links.
+    Raises requests.RequestException on network errors.
     """
     url = f"{BASE_URL}/{page_slug}"
     resp = requests.get(url, timeout=timeout)
@@ -90,14 +91,14 @@ def fetch_firmware_links(page_slug: str, timeout: float = 15.0) -> List[Firmware
     rows = table.find_all("tr")
     links: List[FirmwareLink] = []
 
-    # пропускаем заголовок
+    # skip header row
     for row in rows[1:]:
         cells = row.find_all("td")
         if len(cells) < 6:
             continue
 
-        # Структура таблицы:
-        # 0 - Incremental (ссылка)
+        # Table structure:
+        # 0 - Incremental (link)
         # 1 - Version
         # 2 - Runtime Version
         # 3 - Build Date
@@ -117,7 +118,7 @@ def fetch_firmware_links(page_slug: str, timeout: float = 15.0) -> List[Firmware
         fingerprint = cells[4].get_text(strip=True)
         sha256 = cells[5].get_text(strip=True)
 
-        # Используем числовую часть incremental как основу для сортировки
+        # Use the numeric part of incremental as the base for sorting
         nums = re.findall(r"\d+", incremental)
         version_num = int(nums[0]) if nums else 0
 
@@ -139,16 +140,15 @@ def fetch_firmware_links(page_slug: str, timeout: float = 15.0) -> List[Firmware
 
 def sort_firmware_links_by_version(links: List[FirmwareLink]) -> List[FirmwareLink]:
     """
-    Отсортировать ссылки по номеру версии (убывание).
+    Sort links by version number (descending).
     """
     return sorted(links, key=lambda link: link.version_num, reverse=True)
 
 
 def choose_latest_firmware(links: List[FirmwareLink]) -> Optional[FirmwareLink]:
     """
-    Выбрать самую новую прошивку из списка.
+    Choose the latest firmware from the list.
     """
     if not links:
         return None
     return max(links, key=lambda link: link.version_num)
-
